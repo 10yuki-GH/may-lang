@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>May（五月）在线编译器</title>
+<style>
+body { font-family: sans-serif; background:#111; color:#eee; }
+textarea { width:100%; height:200px; background:#000; color:#0f0; }
+button { padding:8px 16px; margin-top:8px; }
+pre { background:#000; padding:10px; }
+</style>
+</head>
+<body>
+
+<h1>May（五月）在线编译器</h1>
+
+<textarea id="code">
+fun 打招呼(str name) {
+    return("你好，" + name)
+}
+output(打招呼("世界"))
+</textarea>
+
+<br>
+<button onclick="run()">运行</button>
+
+<pre id="out"></pre>
+
+<script>
+async function run() {
+    const res = await fetch("https://你的后端地址/run", {
+        method: "POST",
+        body: document.getElementById("code").value
+    });
+    const data = await res.json();
+    document.getElementById("out").textContent = data.output;
+}
+</script>
+
+</body>
+</html>
