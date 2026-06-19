@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-# May（五月）v0.1 单文件解释器
+# May（五月）v0.1 完整单文件解释器
 
-import sys
+import sys, re
 
 # ===== Token =====
 TOKENS = [
@@ -14,18 +14,17 @@ TOKENS = [
 ]
 
 def tokenize(code):
-    import re
-    tokens = []
-    while code:
+    tokens, pos = [], 0
+    while pos < len(code):
         for name, pat in TOKENS:
-            m = re.match(pat, code)
+            m = re.match(pat, code[pos:])
             if m:
                 if name != "SKIP":
                     tokens.append((name, m.group()))
-                code = code[m.end():]
+                pos += m.end()
                 break
         else:
-            raise SyntaxError("非法字符: " + code[0])
+            raise SyntaxError("非法字符: " + code[pos])
     return tokens
 
 
@@ -50,20 +49,15 @@ class Parser:
         return stmts
 
     def parse_stmt(self):
-        tok = self.peek()
-        if tok[1] == "fun":
-            return self.parse_fun()
-        if tok[1] == "str" or tok[1] == "int":
-            return self.parse_var()
-        if tok[1] == "output":
-            return self.parse_output()
-        if tok[1] == "input":
-            return self.parse_input()
-        if tok[1] == "bool":
-            return self.parse_if()
-        if tok[1] == "while":
-            return self.parse_while()
-        raise SyntaxError("未知语句")
+        t = self.peek()[1]
+        if t == "fun": return self.parse_fun()
+        if t in ("str", "int"): return self.parse_var()
+        if t == "output": return self.parse_output()
+        if t == "input": return self.parse_input()
+        if t == "bool": return self.parse_if()
+        if t == "while": return self.parse_while()
+        if t == "return": return self.parse_return()
+        return self.parse_expr()
 
     def parse_fun(self):
         self.next()
@@ -75,16 +69,16 @@ class Parser:
         self.next()
         body = []
         while self.peek()[1] != "}":
-            body.append(self.next())
+            body.append(self.parse_stmt())
         self.next()
         return {"type": "fun", "name": name, "params": params, "body": body}
 
     def parse_var(self):
-        typ = self.next()[1]
+        dtype = self.next()[1]
         name = self.next()[1]
         self.next()
         value = self.next()[1]
-        return {"type": "var", "dtype": typ, "name": name, "value": value}
+        return {"type": "var", "name": name, "value": value}
 
     def parse_output(self):
         self.next()
@@ -109,7 +103,7 @@ class Parser:
         self.next()
         body = []
         while self.peek()[1] != "}":
-            body.append(self.next()[1])
+            body.append(self.parse_stmt())
         self.next()
         return {"type": "if", "left": left, "right": right, "body": body}
 
@@ -119,9 +113,25 @@ class Parser:
         self.next()
         body = []
         while self.peek()[1] != "}":
-            body.append(self.next()[1])
+            body.append(self.parse_stmt())
         self.next()
         return {"type": "while", "count": count, "body": body}
+
+    def parse_return(self):
+        self.next()
+        value = self.next()[1]
+        return {"type": "return", "value": value}
+
+    def parse_expr(self):
+        name = self.next()[1]
+        if self.peek() and self.peek()[1] == "(":
+            self.next()
+            args = []
+            while self.peek()[1] != ")":
+                args.append(self.next()[1])
+            self.next()
+            return {"type": "call", "name": name, "args": args}
+        return {"type": "id", "name": name}
 
 
 # ===== Interpreter =====
@@ -131,46 +141,71 @@ class Interpreter:
         self.funs = {}
 
     def run(self, code):
-        tokens = tokenize(code)
-        stmts = Parser(tokens).parse()
-        for s in stmts:
-            self.exec(s)
+        for s in Parser(tokenize(code)).parse():
+            r = self.exec(s)
+            if r is not None:
+                return r
 
     def exec(self, s):
         if s["type"] == "var":
             self.env[s["name"]] = s["value"].strip('"')
+
         elif s["type"] == "fun":
             self.funs[s["name"]] = s
+
+        elif s["type"] == "call":
+            fun = self.funs[s["name"]]
+            old_env = self.env.copy()
+            for k, v in zip(fun["params"], s["args"]):
+                self.env[k] = v.strip('"')
+            for stmt in fun["body"]:
+                r = self.exec(stmt)
+                if r is not None:
+                    self.env = old_env
+                    return r
+            self.env = old_env
+
+        elif s["type"] == "return":
+            return self.env.get(s["value"], s["value"]).strip('"')
+
+        elif s["type"] == "noreturn":
+            pass
+
         elif s["type"] == "output":
             out = []
             for a in s["args"]:
                 out.append(str(self.env.get(a, a)).strip('"'))
             print("".join(out))
+
         elif s["type"] == "input":
             val = input(s["prompt"].strip('"'))
             if s["kind"] == "newvar":
                 self.env[s["name"]] = val
+
         elif s["type"] == "if":
             if self.env.get(s["left"]) == s["right"].strip('"'):
-                print("True:", s["body"])
+                for stmt in s["body"]:
+                    self.exec(stmt)
+
         elif s["type"] == "while":
             for i in range(s["count"]):
-                print(f"第{i+1}回合")
+                for stmt in s["body"]:
+                    self.exec(stmt)
 
 
 # ===== REPL / CLI =====
 def repl():
-    interp = Interpreter()
+    i = Interpreter()
     print("May（五月）v0.1")
     while True:
         try:
             line = input(">>> ")
-            if line == "exit":
-                break
-            interp.run(line)
+            if line == "exit": break
+            r = i.run(line)
+            if r is not None:
+                print(r)
         except Exception as e:
             print("错误:", e)
-
 
 def main():
     if len(sys.argv) == 1:
@@ -178,7 +213,6 @@ def main():
     else:
         with open(sys.argv[1], encoding="utf-8") as f:
             Interpreter().run(f.read())
-
 
 if __name__ == "__main__":
     main()
